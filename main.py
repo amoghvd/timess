@@ -112,6 +112,35 @@ def make_handler(holder, rules_dir, db_path):
             parsed = urlparse(self.path)
             parts = [p for p in parsed.path.split("/") if p]
             query = parse_qs(parsed.query)
+            # ASK brand assets (transparent logo + favicons, assets/).
+            # Binary PNG/ICO files cannot go through the snapshot push
+            # (UTF-8 text only), so each one also has a .b64 text twin
+            # in the repo. If the binary is missing (a fresh pull), the
+            # server decodes the .b64 twin and serves the real bytes.
+            def _send_asset(name):
+                path = os.path.join(ROOT, "assets", name)
+                if os.path.isfile(path):
+                    return self._send_file(path)
+                b64 = path + ".b64"
+                if os.path.isfile(b64):
+                    import base64
+                    with open(b64, "r", encoding="ascii") as f:
+                        body = base64.b64decode(f.read())
+                    mime, _ = mimetypes.guess_type(path)
+                    self.send_response(200)
+                    self.send_header("Content-Type", mime or "application/octet-stream")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return None
+                return self._send_json({"error": "not found"}, 404)
+            if parsed.path == "/favicon.ico":
+                return _send_asset("favicon.ico")
+            if parsed.path.startswith("/assets/") or parsed.path.startswith("/app/assets/"):
+                name = parsed.path.split("/")[-1]
+                if ".." in name or "/" in name:
+                    return self._send_json({"error": "not found"}, 404)
+                return _send_asset(name)
             # Showcase is the main page. The real-data upload dashboard
             # (frontend/) lives at /app — the showcase links there.
             if parsed.path == "/":
@@ -154,13 +183,10 @@ def make_handler(holder, rules_dir, db_path):
                         "tables": counts,
                         "top_techniques": [{"stage": b[0], "technique_id": b[1], "technique_name": b[2], "count": b[3]} for b in breakdown]
                     })
-                if parts == ["clear"]:
-                    try:
-                        holder.con.close()
-                    except Exception:
-                        pass
-                    holder.con = store.connect(db_path, fresh=True)
-                    return self._send_json({"status": "ok", "detections": 0, "incidents": 0})
+                # Note: Amogh's timess also added a GET /clear route that
+                # wiped the DB on a plain GET. Removed on merge: clearing
+                # must only happen via POST /clear (the button), never by
+                # visiting a URL, a prefetch, or a link.
                 if parts == ["health"]:
                     return self._send_json({"status": "ok",
                                             "detections": store.count_detections(holder.con),
