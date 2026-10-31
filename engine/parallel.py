@@ -206,7 +206,8 @@ def parallel_run(log_path: str, db_path: str, rules_dir: str, workers: int = 0,
     with ProcessPoolExecutor(max_workers=workers,
                              initializer=_init_worker, initargs=(rules_dir,)) as pool:
         completed_workers = 0
-        _tmpdir = os.path.dirname(os.path.abspath(db_path)) or "."
+        _tmpdir = os.path.join(os.path.dirname(os.path.abspath(db_path)) or ".", ".tmp_parallel")
+        os.makedirs(_tmpdir, exist_ok=True)
         for result in pool.map(_process_range, [(log_path, s, e, _tmpdir) for s, e in ranges]):
             completed_workers += 1
             total_events += result["events"]

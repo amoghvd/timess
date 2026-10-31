@@ -10,3 +10,4 @@ test*.duckdb
 tmp*.jsonl
 tmp*.log
 *.tmp
+.tmp_parallel/
