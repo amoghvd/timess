@@ -30,6 +30,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 
 from engine import graph as graph_mod  # noqa: E402
+from engine import mitre as mitre_mod  # noqa: E402
 from engine import report as report_mod  # noqa: E402
 from engine import store  # noqa: E402
 from engine.api import LOCK, _apply_detection, _incident_with_extras  # noqa: E402
@@ -72,6 +73,13 @@ def _progress_snapshot():
     with PROGRESS_LOCK:
         snap = dict(PROGRESS)
     snap["eta_text"] = _fmt_eta(snap["eta_seconds"])
+    # CPU/RAM on every poll (never break a poll if stats fail).
+    try:
+        from engine import sysstats as _ss
+        snap.update(_ss.snapshot())
+        snap["elapsed_text"] = _ss.fmt_duration(snap.get("elapsed_seconds", 0))
+    except Exception:
+        pass
     return snap
 
 
@@ -250,9 +258,22 @@ def make_handler(holder, rules_dir, db_path, live_watch=None):
                         return self._send_json({"error": "incident not found"}, 404)
                     return self._send_json({"incident_id": inc["id"], "next_reach": inc["next_reach"],
                                             "next_stages": inc["next_stages"],
-                                            "blast_radius": inc["blast_radius"]})
+                                            "blast_radius": inc["blast_radius"],
+                                            "next_basis": inc.get("next_basis", ""),
+                                            "next_frontier_total": inc.get("next_frontier_total", 0),
+                                            "blast_basis": inc.get("blast_basis", ""),
+                                            "blast_breakdown": inc.get("blast_breakdown")})
+                # Slim MITRE index (lookup only, lazy — see engine/mitre.py).
+                if parts == ["mitre"]:
+                    return self._send_json(mitre_mod.coverage(
+                        os.path.join(ROOT, "rules")))
+                if len(parts) == 2 and parts[0] == "mitre":
+                    _t = mitre_mod.lookup(parts[1].upper())
+                    if not _t:
+                        return self._send_json({"error": "technique not in MITRE index"}, 404)
+                    return self._send_json(_t)
                 # Custom 404 page for browsers, JSON only for API calls.
-                if parts and parts[0] not in ("health", "incidents", "progress", "db", "clear", "upload"):
+                if parts and parts[0] not in ("health", "incidents", "progress", "db", "clear", "upload", "mitre"):
                     _p404 = os.path.join(FRONTEND, "404.html")
                     if os.path.isfile(_p404):
                         with open(_p404, "rb") as _f:
@@ -280,7 +301,7 @@ def make_handler(holder, rules_dir, db_path, live_watch=None):
             filename = self.headers.get("X-Filename") or "uploaded.log"
             started = time.time()
             _set_progress(stage="uploading",
-                          stage_text="Step 1 of 4 — Receiving your file and saving it on this machine. It is not sent anywhere else.",
+                          stage_text="Step 1 of 4 — Receiving",
                           filename=filename, bytes_received=0, bytes_total=length,
                           events=0, detections=0, estimated_total_events=0,
                           events_per_second=0, elapsed_seconds=0, eta_seconds=None,
@@ -330,10 +351,14 @@ def make_handler(holder, rules_dir, db_path, live_watch=None):
                     eta = None
                     if stage == "reading" and eps > 0 and est_total > events:
                         eta = (est_total - events) / eps
+                    # SHORT stage texts (2026-11-01): the old sentences
+                    # were long and repeated on every poll — removed,
+                    # not kept. The progress line now carries the numbers
+                    # (elapsed, ETA, CPU, RAM) instead of prose.
                     texts = {
-                        "reading": "Step 2 of 4 — Reading line by line and checking each line against the detection rules. Benign lines are counted and dropped, not stored.",
-                        "linking": "Step 3 of 4 — Linking flagged lines that share a host, user or IP into one attack path, and scoring its risk.",
-                        "storing": "Step 4 of 4 — Saving the incidents to the database so you can open them below.",
+                        "reading": "Step 2 of 4 — Reading",
+                        "linking": "Step 3 of 4 — Linking",
+                        "storing": "Step 4 of 4 — Saving",
                     }
                     _kw = dict(stage=stage, stage_text=texts.get(stage, stage),
                                events=events, detections=detections,
@@ -366,7 +391,7 @@ def make_handler(holder, rules_dir, db_path, live_watch=None):
                     time.sleep(1)
                 try:
                     _set_progress(stage="reading",
-                                  stage_text="Step 2 of 4 — Starting to read your file line by line.")
+                                  stage_text="Step 2 of 4 — Reading")
                     try:
                         holder.con.close()
                     except Exception:
@@ -379,18 +404,16 @@ def make_handler(holder, rules_dir, db_path, live_watch=None):
                     # replay, so no line is ever dropped or double-counted.
                     import os as _os
                     from engine.parallel import cpu_friendly_workers as _workers
-                    # User demand (2026-11-01): 8 workers, 4 is too few.
-                    # Explicit request, capped by cores and by RAM
-                    # (max 8 on an 8 GB machine, 2 on a 4 GB machine).
-                    # Trade-off, stated plainly: 8 workers use more
-                    # CPU/RAM and the system may lag while they run.
-                    _workers_n = _workers(8)
+                    # User demand, revised (2026-11-01): 6 workers, not
+                    # 8 — the 8-worker run jammed for 5 minutes on an
+                    # HDD + 90% RAM machine (8 concurrent disk streams
+                    # thrash a spinning disk and page memory). 6 is the
+                    # compromise the user asked to try. Explicit
+                    # request, capped by cores and by RAM.
+                    _workers_n = _workers(6)
                     if (est_total > 50000 or length > 20 * 1024 * 1024) and _workers_n > 1:
                         _set_progress(stage_text=(
-                            f"Step 2 of 4 — Reading with {_workers_n} workers. "
-                            f"Benign lines are counted and dropped, not stored. "
-                            f"Progress updates after every small chunk, so "
-                            f"the first update arrives within seconds."))
+                            f"Step 2 of 4 — Reading ({_workers_n} workers)"))
                         summary = parallel_run(tmp_path, db_path, rules_dir,
                                                workers=_workers_n,
                                                on_progress=_on_progress)
@@ -401,11 +424,17 @@ def make_handler(holder, rules_dir, db_path, live_watch=None):
                 finally:
                     LOCK.release()
                 summary["filename"] = filename
+                # TOTAL TIME (2026-11-01): elapsed was tracked all along
+                # but the frontend never showed it — the done line just
+                # said 'incidents are ready'. Now the total time is in
+                # the done text itself, so it cannot be missed.
+                from engine import sysstats as _ss2
+                _total_s = round(time.time() - started, 1)
                 _set_progress(stage="done",
-                              stage_text="Done — incidents are ready below.",
+                              stage_text=f"Done in {_ss2.fmt_duration(_total_s)} — incidents are ready below.",
                               events=summary.get("events", 0),
                               detections=summary.get("detections", 0),
-                              elapsed_seconds=round(time.time() - started, 1),
+                              elapsed_seconds=_total_s,
                               eta_seconds=0, done=True)
                 return self._send_json(summary)
             except Exception as exc:  # keep the server alive, report the error
