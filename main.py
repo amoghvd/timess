@@ -29,6 +29,20 @@ from urllib.parse import parse_qs, urlparse
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 
+# Load .env file into environment if present
+_env_file = os.path.join(ROOT, ".env")
+if os.path.isfile(_env_file):
+    try:
+        with open(_env_file, "r", encoding="utf-8") as _f:
+            for _l in _f:
+                _l = _l.strip()
+                if _l and not _l.startswith("#") and "=" in _l:
+                    _k, _v = _l.split("=", 1)
+                    if _k.strip() and _k.strip() not in os.environ:
+                        os.environ[_k.strip()] = _v.strip()
+    except Exception:
+        pass
+
 from engine import graph as graph_mod  # noqa: E402
 from engine import mitre as mitre_mod  # noqa: E402
 from engine import report as report_mod  # noqa: E402

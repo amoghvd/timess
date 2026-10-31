@@ -155,6 +155,21 @@ def hindi_report(incident: Dict, next_list: List[Dict]) -> Dict:
     english = english_report(incident, next_list)
     key = os.environ.get("SARVAM_API_KEY", "").strip()
     if not key:
+        for _p in (os.path.join(os.path.dirname(__file__), "..", ".env"), ".env"):
+            if os.path.isfile(_p):
+                try:
+                    with open(_p, "r", encoding="utf-8") as _f:
+                        for _l in _f:
+                            _l = _l.strip()
+                            if _l.startswith("SARVAM_API_KEY=") and not _l.startswith("#"):
+                                key = _l.split("=", 1)[1].strip()
+                                os.environ["SARVAM_API_KEY"] = key
+                                break
+                except Exception:
+                    pass
+            if key:
+                break
+    if not key:
         return {"hindi": _hindi_template(incident, next_list),
                 "source": "mock_template",
                 "warning": ("No SARVAM_API_KEY is set, so this is a Hindi "
