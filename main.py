@@ -444,7 +444,7 @@ def main():
     r.add_argument("--topology", default=None)
     r.add_argument("--ground-truth", default=None)
     r.add_argument("--workers", type=int, default=1,
-                   help="1 = single-core (default). >1 = multi-core parallel, capped at 70% of cores so the system stays usable. 0 = 70% of cores, negative = all cores")
+                   help="1 = single-core (default). >1 = multi-core parallel, capped at 70%% of cores so the system stays usable. 0 = 70%% of cores, negative = all cores")
     args = ap.parse_args()
     if args.cmd == "serve":
         serve(args.db, args.host, args.port, args.rules, args.watch)
