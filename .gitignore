@@ -6,3 +6,7 @@ out.duckdb
 uploaded_logs/
 .venv/
 test*.duckdb
+
+tmp*.jsonl
+tmp*.log
+*.tmp
