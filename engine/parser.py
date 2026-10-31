@@ -106,7 +106,9 @@ def _parse_kv(line: str) -> Optional[Dict]:
         raw["detail"] = raw["msg"]
     elif "attack" in raw:
         raw["detail"] = f"Attack {raw.get('attack')} on {raw.get('dstip', '')}"
-        raw["action"] = f"attack {raw.get('attack')}"
+        # Keep logdesc in the action: overwriting it here used to lose
+        # the only keyword a rule could match on.
+        raw["action"] = f"{raw.get('logdesc', '')} attack {raw.get('attack')}".strip()
     elif "virus" in raw:
         raw["detail"] = f"Virus {raw.get('virus')} url: {raw.get('url', '')}"
         raw["action"] = "malicious file virus"
