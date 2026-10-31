@@ -195,6 +195,7 @@ def main():
     parser.add_argument("--output", choices=["file", "stdout", "console"], default="file", help="Output mode")
     parser.add_argument("--file", default="edr_events.json", help="Output file path")
     parser.add_argument("--rate", type=float, default=0, help="Rate limit in events/second (0 = unlimited)")
+    parser.add_argument("--format", choices=["auto", "pipe", "log", "json"], default="auto", help="Output format (auto, log/pipe, json)")
     args = parser.parse_args()
 
     # If relative filename given, resolve to current directory
@@ -243,7 +244,17 @@ def main():
             else:
                 event = generate_event(current_time, user, host, ip)
 
-            line = json.dumps(event)
+            # Determine line format
+            fmt = args.format
+            if fmt == "auto":
+                fmt = "json" if out_file.endswith(".json") else "pipe"
+            if fmt in ("pipe", "log"):
+                stage = event.get("stage", "Normal")
+                tech = event.get("technique", "None")
+                sev = event.get("severity", "Low")
+                line = f"{event['time']}|{event['host']}|{event['user']}|{event['ip']}|{event['source']}|{event['action']}|{event['detail']}|{stage}|{tech}|{sev}"
+            else:
+                line = json.dumps(event)
             handle.write(line + "\n")
 
             if delay > 0:
