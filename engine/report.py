@@ -176,22 +176,64 @@ def hindi_report(incident: Dict, next_list: List[Dict]) -> Dict:
                             "template built from the incident fields, NOT a "
                             "real Sarvam translation.")}
     try:
-        payload = json.dumps({
-            "input": english,
-            "source_language_code": "en-IN",
-            "target_language_code": "hi-IN",
-            "mode": "formal",
-        }).encode("utf-8")
-        request = urllib.request.Request(
-            SARVAM_URL, data=payload,
-            headers={"Content-Type": "application/json",
-                     "api-subscription-key": key}, method="POST")
-        with urllib.request.urlopen(request, timeout=30) as response:
-            data = json.loads(response.read().decode("utf-8"))
-        translated = data.get("translated_text") or ""
+        def _chunk_text(text: str, max_len: int = 800) -> List[str]:
+            if len(text) <= max_len:
+                return [text]
+            delims = [". ", "; ", "\n"]
+            parts = [text]
+            for d in delims:
+                new_parts = []
+                for p in parts:
+                    if len(p) > max_len:
+                        new_parts.extend(p.split(d))
+                    else:
+                        new_parts.append(p)
+                parts = new_parts
+            chunks, cur = [], ""
+            for p in parts:
+                p = p.strip()
+                if not p:
+                    continue
+                if len(p) > max_len:
+                    words = p.split()
+                    for w in words:
+                        if len(cur) + len(w) + 1 > max_len and cur:
+                            chunks.append(cur.strip())
+                            cur = w
+                        else:
+                            cur += (" " if cur else "") + w
+                else:
+                    if len(cur) + len(p) + 2 > max_len and cur:
+                        chunks.append(cur.strip())
+                        cur = p
+                    else:
+                        cur += ("; " if cur else "") + p
+            if cur.strip():
+                chunks.append(cur.strip())
+            return chunks
+
+        translated_parts = []
+        for chunk in _chunk_text(english, 800):
+            payload = json.dumps({
+                "input": chunk,
+                "source_language_code": "en-IN",
+                "target_language_code": "hi-IN",
+                "mode": "formal",
+            }).encode("utf-8")
+            request = urllib.request.Request(
+                SARVAM_URL, data=payload,
+                headers={"Content-Type": "application/json",
+                         "api-subscription-key": key}, method="POST")
+            with urllib.request.urlopen(request, timeout=30) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            t_chunk = data.get("translated_text") or ""
+            if t_chunk:
+                translated_parts.append(t_chunk)
+            else:
+                raise ValueError("Sarvam response had no translated_text")
+        translated = " ".join(translated_parts)
         if translated:
             return {"hindi": translated, "source": "sarvam", "warning": ""}
-        raise ValueError("Sarvam response had no translated_text")
     except Exception as exc:  # network/auth/format failure -> labelled fallback
         return {"hindi": _hindi_template(incident, next_list),
                 "source": "mock_template",
